@@ -70,9 +70,9 @@ function decryptCredentials(blob: string): UserCredentials | null {
 
 // --- DB storage (encrypted, RLS-protected) ---
 
-async function storeSession(accessToken: string, creds: UserCredentials): Promise<void> {
+async function storeSession(accessToken: string, creds: UserCredentials): Promise<boolean> {
   const encrypted = encryptCredentials(creds);
-  await fetch(`${SUPABASE_URL}/rest/v1/user_sessions`, {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/user_sessions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -82,6 +82,7 @@ async function storeSession(accessToken: string, creds: UserCredentials): Promis
     },
     body: JSON.stringify({ access_token: accessToken, encrypted_creds: encrypted }),
   });
+  return resp.ok;
 }
 
 async function getSession(accessToken: string): Promise<UserCredentials | null> {
@@ -203,7 +204,7 @@ const TOOLS = [
           items: {
             type: "object",
             properties: {
-              volume_ml: { type: "number" },
+              volume_ml: { type: "number", description: "Water volume for THIS INDIVIDUAL pour step in ml (NOT the total). E.g. for 15g dose at 1:15 ratio (225ml total) split across 4 pours: 45, 65, 60, 55" },
               temperature_c: { type: "number" },
               pattern: { type: "string", enum: ["centered", "circular", "spiral"] },
               flow_rate: { type: "number" },
@@ -347,7 +348,8 @@ async function loginXbloom(args: Record<string, unknown>, accessToken: string): 
       token: resp.token as string,
       email: args.email as string,
     };
-    await storeSession(accessToken, creds);
+    const saved = await storeSession(accessToken, creds);
+    if (!saved) return `Login succeeded but session could not be saved. Please try again.`;
     return `Logged in successfully. Your recipes are now accessible.`;
   }
 
@@ -402,7 +404,7 @@ async function createRecipe(args: Record<string, unknown>, creds: UserCredential
 }
 
 async function createTeaRecipe(args: Record<string, unknown>, creds: UserCredentials): Promise<string> {
-  const steeps = (args.steeps as Array<Record<string, unknown>>) || [];
+  const steeps = ((args.steeps as Array<Record<string, unknown>>) || []).slice(0, 3);
   const pourList = steeps.map((s, i) => ({
     theName: i === 0 ? "Steep 1" : `Steep ${i + 1}`,
     volume: Math.min(Number(s.volume_ml ?? 80), 90),
@@ -463,10 +465,10 @@ async function editRecipe(args: Record<string, unknown>, creds: UserCredentials)
     grinderSize: args.grind_size && Number(args.grind_size) > 0 ? Number(args.grind_size) : Number(current.grinderSize),
     rpm: args.grind_rpm && Number(args.grind_rpm) > 0 ? Number(args.grind_rpm) : Number(current.rpm),
     theColor: (args.color as string) || current.theColor || "#C9D5B8",
-    cupType: 2,
+    cupType: current.cupType ?? 2,
     adaptedModel: 1,
     isEnableBypassWater: 2,
-    isSetGrinderSize: 1,
+    isSetGrinderSize: current.isSetGrinderSize ?? 1,
     theSubsetId: current.theSubsetId ?? 0,
     bypassTemp: current.bypassTemp ?? 85.0,
     bypassVolume: current.bypassVolume ?? 5.0,
@@ -532,7 +534,7 @@ async function fetchRecipe(args: Record<string, unknown>): Promise<string> {
       })),
     }, null, 2);
   }
-  return `Failed. Your session may have expired — try logging in again.`;
+  return `Failed to fetch recipe. The share URL may be invalid or the recipe may have been deleted.`;
 }
 
 // --- Tool dispatch ---
