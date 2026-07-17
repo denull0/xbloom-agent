@@ -385,7 +385,10 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 [functions.xbloom-mcp]
 enabled = true
-verify_jwt = true
+# Must stay false: OAuth discovery, /register, /authorize and /token are all called
+# by clients that have no Supabase JWT. Gateway JWT verification 401s them before the
+# function runs, which breaks the connector.
+verify_jwt = false
 import_map = "./functions/xbloom-mcp/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx

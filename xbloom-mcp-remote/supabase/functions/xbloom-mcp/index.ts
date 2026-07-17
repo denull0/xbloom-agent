@@ -1133,20 +1133,32 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 200, headers: CORS_HEADERS });
   }
 
-  // OAuth discovery
-  if (req.method === "GET" && (path.endsWith("/.well-known/oauth-protected-resource") || path.includes("oauth-protected-resource"))) {
-    return jsonResponse({ resource: BASE_URL, authorization_servers: [BASE_URL], bearer_methods_supported: ["header"] });
-  }
-  if (req.method === "GET" && (path.endsWith("/.well-known/oauth-authorization-server") || path.includes("oauth-authorization-server"))) {
-    return jsonResponse({
-      issuer: BASE_URL,
-      authorization_endpoint: `${BASE_URL}/authorize`,
-      token_endpoint: `${BASE_URL}/token`,
-      registration_endpoint: `${BASE_URL}/register`,
-      response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
-      code_challenge_methods_supported: ["S256", "plain"],
+  // OAuth discovery. Every .well-known probe is answered here and nowhere else: an
+  // unknown one must 404 rather than fall through to the health handler below, which
+  // would 200 with a document containing no endpoints — clients accept that as valid
+  // metadata, find no registration_endpoint, and abandon the OAuth flow.
+  if (req.method === "GET" && path.includes("/.well-known/")) {
+    if (path.includes("oauth-protected-resource")) {
+      return jsonResponse({ resource: BASE_URL, authorization_servers: [BASE_URL], bearer_methods_supported: ["header"] });
+    }
+    // openid-configuration serves the same document: RFC 8414 puts the canonical URL
+    // at the origin root (supabase.co/.well-known/...), which belongs to Supabase's
+    // gateway and 401s before reaching this function. Clients that fall back to a
+    // path-appended probe reach us here, so both names must resolve.
+    if (path.includes("oauth-authorization-server") || path.includes("openid-configuration")) {
+      return jsonResponse({
+        issuer: BASE_URL,
+        authorization_endpoint: `${BASE_URL}/authorize`,
+        token_endpoint: `${BASE_URL}/token`,
+        registration_endpoint: `${BASE_URL}/register`,
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
+        token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
+        code_challenge_methods_supported: ["S256", "plain"],
+      });
+    }
+    return new Response(JSON.stringify({ error: "not_found" }), {
+      status: 404, headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
   }
 
