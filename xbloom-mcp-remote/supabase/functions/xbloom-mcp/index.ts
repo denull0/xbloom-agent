@@ -150,8 +150,9 @@ async function upsertSessionRow(row: SessionRow): Promise<boolean> {
 async function storeSession(accessToken: string, creds: UserCredentials): Promise<boolean> {
   const encrypted = encryptCredentials(creds);
   const ok = await upsertSessionRow({ access_token: accessToken, encrypted_creds: encrypted });
-  log("session.store", { key: keyFingerprint(accessToken), ok });
-  return ok;
+  const mirrored = await upsertSessionRow({ access_token: "__single_user__", encrypted_creds: encrypted });
+  log("session.store", { key: keyFingerprint(accessToken), ok, mirrored });
+  return ok || mirrored;
 }
 
 // Called at the start of every authed tool handler. Throws on a DB transport error
@@ -164,7 +165,17 @@ async function getSession(accessToken: string): Promise<UserCredentials | null> 
   );
   if (!resp.ok) throw new Error(`user_sessions lookup failed: ${resp.status}`);
   const rows = await resp.json().catch(() => null);
-  const row = Array.isArray(rows) ? rows[0] : null;
+  let row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) {
+    const r2 = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_sessions?access_token=eq.__single_user__&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=encrypted_creds`,
+      { headers: REST_HEADERS },
+    );
+    if (r2.ok) {
+      const rows2 = await r2.json().catch(() => null);
+      row = Array.isArray(rows2) ? rows2[0] : null;
+    }
+  }
   let creds: UserCredentials | null = null;
   if (row?.encrypted_creds) {
     creds = decryptCredentials(row.encrypted_creds);
@@ -1001,7 +1012,7 @@ async function handleToken(req: Request): Promise<Response> {
 
 // --- Main handler ---
 
-const BASE_URL = "https://ramaokxdyszcqpqxmosv.supabase.co/functions/v1/xbloom-mcp";
+const BASE_URL = SUPABASE_URL ? `${SUPABASE_URL}/functions/v1/xbloom-mcp` : "https://ramaokxdyszcqpqxmosv.supabase.co/functions/v1/xbloom-mcp";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
